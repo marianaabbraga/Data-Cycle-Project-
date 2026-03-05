@@ -11,7 +11,7 @@ PORTFOLIO = ['AAPL', 'MSFT', 'NVDA']
 START_DATE = "2022-01-01"
 END_DATE = None  # None = today
 
-BASE_FOLDER = "test" 
+BASE_FOLDER = "Tests" 
 
 # ==============================
 # SETUP
