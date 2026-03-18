@@ -10,7 +10,7 @@ from sklearn.cluster import KMeans
 # ==============================================================================
 
 BRONZE_DIR = r"..\DataLake\Bronze"
-SILVER_DIR = "output_silver"
+SILVER_DIR = r"..\DataLake\Silver"
 
 os.makedirs(SILVER_DIR, exist_ok=True)
 
