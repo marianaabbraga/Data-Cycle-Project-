@@ -15,7 +15,7 @@ PORTFOLIO = ["AAPL", "MSFT", "NVDA"]
 ETF_PORTFOLIO = ["SPY", "QQQ"]
 MARKETS = ["us_market", "eu_market"]
 START_DATE = "2016-01-01"
-OUTPUT_DIR = "output_raw"
+OUTPUT_DIR = r"..\DataLake\Bronze"
 
 SUBFOLDERS = ["ticker", "market", "sector_industry", "equity", "funds"]
 
