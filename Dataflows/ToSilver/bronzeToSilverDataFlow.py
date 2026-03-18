@@ -147,6 +147,9 @@ def compute_indicators(df):
     df["tr"] = df["High"] - df["Low"]
     df["atr"] = df.groupby("ticker")["tr"].transform(lambda x: x.rolling(14).mean())
 
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].round(2)
+
     return df
 
 # ==============================================================================
@@ -170,6 +173,10 @@ def build_price_history(df):
 
     df["adj_close"] = df["close"]
     df["year"] = df["date"].dt.year 
+
+    # 2位小数保留（交易价格字段）
+    num_cols = ["open", "high", "low", "close", "adj_close"]
+    df[num_cols] = df[num_cols].round(2)
 
     return df[["ticker","date","year","open","high","low","close","volume","adj_close"]]
 
