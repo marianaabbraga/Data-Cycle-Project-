@@ -11,8 +11,48 @@ from sklearn.cluster import KMeans
 
 BRONZE_DIR = r"..\DataLake\Bronze"
 SILVER_DIR = r"..\DataLake\Silver"
+# BRONZE_DIR = "Bronze"
+# SILVER_DIR = "Silver"
+
+# [INCREMENTAL] Path to the watermark file that records the last successful run.
+# Silver reads this to know which Bronze files are new; Bronze writes it after
+# each extraction so Silver always has a reliable cutoff timestamp.
+# WATERMARK_FILE = r"..\DataLake\_last_silver_run.txt"
+WATERMARK_FILE = "_last_silver_run.txt"
+
+# [INCREMENTAL] Lookback window fed to compute_indicators alongside new rows.
+# Must be >= the longest rolling window used below (sma_50 = 50 days).
+# 60 gives a small safety buffer on top of that.
+LOOKBACK_ROWS = 60
 
 os.makedirs(SILVER_DIR, exist_ok=True)
+
+# ==============================================================================
+# WATERMARK
+# ==============================================================================
+
+# [INCREMENTAL] 
+# load_watermark() → returns 0.0 on the very first run so every existing
+#                    Bronze file is treated as "new" (full back-fill once,
+#                    incremental from the second run onwards).
+# save_watermark() → called ONLY after all Silver writes succeed, so a
+#                    mid-run crash leaves the watermark unchanged and the
+#                    next run will safely retry the same batch.
+
+def load_watermark() -> float:
+    if os.path.exists(WATERMARK_FILE):
+        with open(WATERMARK_FILE) as f:
+            ts_str = f.read().strip()
+        return datetime.strptime(ts_str, "%Y-%m-%d_%H-%M-%S").timestamp()
+    print(" No watermark found — treating all files as new (first run).")
+    return 0.0
+
+
+def save_watermark() -> None:
+    ts_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    with open(WATERMARK_FILE, "w") as f:
+        f.write(ts_str)
+    print(f" Watermark updated → {ts_str}")
 
 # ==============================================================================
 # LOAD
@@ -27,6 +67,37 @@ def load_all_info():
     files = glob(f"{BRONZE_DIR}/ticker/*/*_info_*.parquet")
     dfs = [pd.read_parquet(f) for f in files]
     return pd.concat(dfs, ignore_index=True)
+
+# [INCREMENTAL] Incremental versions of the two loaders above.
+# Instead of globbing every file, they filter by mtime > last_ts so only
+# Bronze files written since the last Silver run are loaded.
+
+def load_new_files(pattern: str, last_ts: float) -> pd.DataFrame:
+    all_files = glob(pattern)
+    # Keep only files whose modification time is newer than the watermark
+    new_files = [f for f in all_files if os.path.getmtime(f) > last_ts]
+    if not new_files:
+        return pd.DataFrame()
+    print(f"  {len(new_files)} new file(s) matched: {pattern.split('/')[-1]}")
+    dfs = [pd.read_parquet(f) for f in new_files]
+    return pd.concat(dfs, ignore_index=True)
+
+
+def load_silver_lookback(table: str, ticker: str, n_rows: int) -> pd.DataFrame:
+    # [INCREMENTAL] Pull the most recent n_rows from an existing Silver partition.
+    # This gives compute_indicators enough historical context so that rolling
+    # windows (e.g. sma_50) produce valid values for the very first new row,
+    # even when only a handful of new Bronze rows arrived today.
+    base = os.path.join(SILVER_DIR, table, f"ticker={ticker}")
+    if not os.path.exists(base):
+        return pd.DataFrame()
+    files = glob(os.path.join(base, "*/data.parquet"))
+    if not files:
+        return pd.DataFrame()
+    df = pd.concat([pd.read_parquet(f) for f in files], ignore_index=True)
+    date_col = "date" if "date" in df.columns else "Date"
+    df = df.sort_values(date_col).tail(n_rows)
+    return df
 
 # ==============================================================================
 # TYPE FIX
@@ -117,12 +188,12 @@ def compute_indicators(df):
     gain = delta.clip(lower=0) # Only keep the days with price increases
     loss = -delta.clip(upper=0) # Only keep the days that are down
 
-    avg_gain = gain.rolling(14).mean()
-    avg_loss = loss.rolling(14).mean()
+    avg_gain = gain.groupby(df["ticker"]).transform(lambda x: x.rolling(14).mean())
+    avg_loss = loss.groupby(df["ticker"]).transform(lambda x: x.rolling(14).mean())
 
     rs = avg_gain / avg_loss
     df["rsi"] = 100 - (100 / (1 + rs))
-    
+
     # MACD (Trend Reversal Detector): Short-term trend - Long-term trend
     # EMA (Exponential Moving Average): Focuses more on recent price than SMA
     # MACD > 0: Short-term stronger than long-term, bullish market (suitable for holding)
@@ -174,7 +245,6 @@ def build_price_history(df):
     df["adj_close"] = df["close"]
     df["year"] = df["date"].dt.year 
 
-    # 2位小数保留（交易价格字段）
     num_cols = ["open", "high", "low", "close", "adj_close"]
     df[num_cols] = df[num_cols].round(2)
 
@@ -210,6 +280,41 @@ def save_hive_partitioned(df, base_path):
 
         print(f"✅ {file_path} ({len(sub_df)} rows)")
 
+# [INCREMENTAL] Upsert helpers — used instead of save_hive_partitioned in the
+# incremental main flow below.
+#
+# upsert_partition(): merges new rows into one existing parquet file on disk.
+#   - File doesn't exist yet → write directly (first run, same as before).
+#   - File exists → concat old + new, deduplicate on keys, overwrite.
+#   keep="last": if yfinance later corrects a past price the re-extracted
+#   value wins. Change to keep="first" to preserve the original value instead.
+#
+# save_hive_partitioned_incremental(): same ticker/year loop as
+#   save_hive_partitioned, but calls upsert_partition per file so only the
+#   partitions that appear in today's batch are touched.
+
+def upsert_partition(new_df: pd.DataFrame, file_path: str, keys: list) -> None:
+    if os.path.exists(file_path):
+        old_df   = pd.read_parquet(file_path)
+        combined = pd.concat([old_df, new_df], ignore_index=True)
+        combined = combined.drop_duplicates(subset=keys, keep="last")
+    else:
+        combined = new_df.copy()
+    combined.to_parquet(file_path, index=False)
+    print(f"  {file_path}  (+{len(new_df)} rows → total {len(combined)})")
+
+
+def save_hive_partitioned_incremental(df: pd.DataFrame, base_path: str, keys: list) -> None:
+    for (ticker, year), sub_df in df.groupby(["ticker", "year"]):
+        path = os.path.join(
+            base_path,
+            f"ticker={ticker}",
+            f"year={year}"
+        )
+        os.makedirs(path, exist_ok=True)
+        file_path = os.path.join(path, "data.parquet")
+        upsert_partition(sub_df, file_path, keys)
+
 # ==============================================================================
 # ANALYTICS
 # ==============================================================================
@@ -244,38 +349,99 @@ print("="*60)
 print("Silver Layer Processing (Hive Partitioned)")
 print("="*60)
 
-df_prices = load_all_prices()
-df_info   = load_all_info()
+# [INCREMENTAL] Load watermark from last successful run.
+# On first run this returns 0.0, which causes load_new_files to match every
+# existing Bronze file — effectively a full back-fill.
+last_ts = load_watermark()
 
-df_prices = clean_prices(df_prices)
-df_ind    = compute_indicators(df_prices)
+# [INCREMENTAL] Replace load_all_prices / load_all_info with filtered loaders
+# that only read Bronze files written since last_ts.
+df_prices = load_new_files(f"{BRONZE_DIR}/ticker/*/*_prices_*.parquet", last_ts)
+df_info   = load_new_files(f"{BRONZE_DIR}/ticker/*/*_info_*.parquet",   last_ts)
 
-stocks_master = build_stocks_master(df_info)
-price_history = build_price_history(df_prices)
-technical     = build_technical(df_ind)
+if df_prices.empty:
+    print("\n⏭️  No new price data. Silver is already up to date.")
+else:
+    df_prices = clean_prices(df_prices)
 
-# =========================
-# SAVE
-# =========================
+    # [INCREMENTAL] Per-ticker lookback + indicator loop.
+    # Problem: compute_indicators uses rolling windows (sma_50 needs 50 rows).
+    # If today's Bronze batch only has 1 new row, the rolling window has no
+    # history and produces NaN for every indicator.
+    # Solution: for each ticker, prepend the last LOOKBACK_ROWS rows from the
+    # existing Silver price_history partition before calling compute_indicators,
+    # then strip those lookback rows out again before writing to Silver.
+    ind_parts = []
 
-print("\nSaving Hive-partitioned tables...")
+    for ticker, grp_new in df_prices.groupby("ticker"):
+        lookback_raw = load_silver_lookback("price_history", ticker, LOOKBACK_ROWS)
 
-# stocks_master
-os.makedirs(f"{SILVER_DIR}/stocks_master", exist_ok=True)
-stocks_master.to_parquet(f"{SILVER_DIR}/stocks_master/data.parquet", index=False)
+        if not lookback_raw.empty:
+            # Re-align Silver column names back to the raw format that
+            # compute_indicators expects (Date / Open / High / Low / Close …)
+            lookback_raw = lookback_raw.rename(columns={
+                "date": "Date", "open": "Open", "high": "High",
+                "low":  "Low",  "close": "Close", "volume": "Volume"
+            })
+            shared_cols = grp_new.columns.intersection(lookback_raw.columns)
+            combined = pd.concat(
+                [lookback_raw[shared_cols], grp_new],
+                ignore_index=True
+            ).sort_values("Date")
+        else:
+            combined = grp_new.sort_values("Date")
 
-# price_history（ticker + year）
-save_hive_partitioned(
-    price_history,
-    os.path.join(SILVER_DIR, "price_history")
-)
+        with_ind = compute_indicators(combined)
 
-# technical_indicators（ticker + year）
-save_hive_partitioned(
-    technical,
-    os.path.join(SILVER_DIR, "technical_indicators")
-)
+        # Drop the lookback rows — only write the genuinely new dates to Silver
+        new_dates = grp_new["Date"].values
+        only_new  = with_ind[with_ind["Date"].isin(new_dates)]
+        ind_parts.append(only_new)
 
-print("\n✅ Silver Layer DONE")
+    df_ind = pd.concat(ind_parts, ignore_index=True)
 
-analytics(price_history)
+    stocks_master = build_stocks_master(df_info) if not df_info.empty else None
+    price_history = build_price_history(df_prices)
+    technical     = build_technical(df_ind)
+
+    # =========================
+    # SAVE
+    # =========================
+
+    print("\nSaving Hive-partitioned tables...")
+
+    # stocks_master
+    # [INCREMENTAL] Upsert on ticker key instead of a blind overwrite, so
+    # existing tickers not present in today's info batch are preserved.
+    if stocks_master is not None:
+        os.makedirs(f"{SILVER_DIR}/stocks_master", exist_ok=True)
+        upsert_partition(
+            stocks_master,
+            f"{SILVER_DIR}/stocks_master/data.parquet",
+            keys=["ticker"]
+        )
+
+    # price_history（ticker + year）
+    # [INCREMENTAL] Replaced save_hive_partitioned → save_hive_partitioned_incremental
+    # so each partition file is upserted (not overwritten) on key (ticker, date).
+    save_hive_partitioned_incremental(
+        price_history,
+        os.path.join(SILVER_DIR, "price_history"),
+        keys=["ticker", "date"]
+    )
+
+    # technical_indicators（ticker + year）
+    save_hive_partitioned_incremental(
+        technical,
+        os.path.join(SILVER_DIR, "technical_indicators"),
+        keys=["ticker", "date"]
+    )
+
+    # [INCREMENTAL] Watermark is saved AFTER all writes succeed.
+    # If anything above raises an exception the watermark stays at its old
+    # value, so the next run retries the same batch — no data is silently lost.
+    save_watermark()
+
+    print("\n✅ Silver Layer DONE")
+
+    analytics(price_history)
