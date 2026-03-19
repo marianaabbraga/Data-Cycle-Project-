@@ -18,13 +18,27 @@ os.makedirs(SILVER_DIR, exist_ok=True)
 # LOAD
 # ==============================================================================
 
-def load_all_prices():
-    files = glob(f"{BRONZE_DIR}/ticker/*/*_prices_*.parquet")
+def load_all_prices(tickers=None):
+    if tickers:
+        files = []
+        for t in tickers:
+            files.extend(glob(f"{BRONZE_DIR}/ticker/{t}/*_prices_*.parquet"))
+    else:
+        files = glob(f"{BRONZE_DIR}/ticker/*/*_prices_*.parquet")
+    if not files:
+        return pd.DataFrame()
     dfs = [pd.read_parquet(f) for f in files]
     return pd.concat(dfs, ignore_index=True)
 
-def load_all_info():
-    files = glob(f"{BRONZE_DIR}/ticker/*/*_info_*.parquet")
+def load_all_info(tickers=None):
+    if tickers:
+        files = []
+        for t in tickers:
+            files.extend(glob(f"{BRONZE_DIR}/ticker/{t}/*_info_*.parquet"))
+    else:
+        files = glob(f"{BRONZE_DIR}/ticker/*/*_info_*.parquet")
+    if not files:
+        return pd.DataFrame()
     dfs = [pd.read_parquet(f) for f in files]
     return pd.concat(dfs, ignore_index=True)
 
@@ -240,42 +254,55 @@ def analytics(df):
 # MAIN
 # ==============================================================================
 
-print("="*60)
-print("Silver Layer Processing (Hive Partitioned)")
-print("="*60)
+def main(tickers=None):
+    print("=" * 60)
+    print("Silver Layer Processing (Hive Partitioned)")
+    if tickers:
+        print(f"Incremental mode — tickers: {', '.join(tickers)}")
+    print("=" * 60)
 
-df_prices = load_all_prices()
-df_info   = load_all_info()
+    df_prices = load_all_prices(tickers)
+    if df_prices.empty:
+        print("\nNo price data found. Nothing to process.")
+        return
 
-df_prices = clean_prices(df_prices)
-df_ind    = compute_indicators(df_prices)
+    # Always rebuild stocks_master from ALL info (it's small)
+    df_info = load_all_info()
 
-stocks_master = build_stocks_master(df_info)
-price_history = build_price_history(df_prices)
-technical     = build_technical(df_ind)
+    df_prices = clean_prices(df_prices)
+    df_ind = compute_indicators(df_prices)
 
-# =========================
-# SAVE
-# =========================
+    stocks_master = build_stocks_master(df_info)
+    price_history = build_price_history(df_prices)
+    technical = build_technical(df_ind)
 
-print("\nSaving Hive-partitioned tables...")
+    print("\nSaving Hive-partitioned tables...")
 
-# stocks_master
-os.makedirs(f"{SILVER_DIR}/stocks_master", exist_ok=True)
-stocks_master.to_parquet(f"{SILVER_DIR}/stocks_master/data.parquet", index=False)
+    os.makedirs(f"{SILVER_DIR}/stocks_master", exist_ok=True)
+    stocks_master.to_parquet(f"{SILVER_DIR}/stocks_master/data.parquet", index=False)
 
-# price_history（ticker + year）
-save_hive_partitioned(
-    price_history,
-    os.path.join(SILVER_DIR, "price_history")
-)
+    save_hive_partitioned(
+        price_history,
+        os.path.join(SILVER_DIR, "price_history")
+    )
 
-# technical_indicators（ticker + year）
-save_hive_partitioned(
-    technical,
-    os.path.join(SILVER_DIR, "technical_indicators")
-)
+    save_hive_partitioned(
+        technical,
+        os.path.join(SILVER_DIR, "technical_indicators")
+    )
 
-print("\n✅ Silver Layer DONE")
+    print("\n✅ Silver Layer DONE")
 
-analytics(price_history)
+    if not tickers:
+        analytics(price_history)
+    else:
+        print("(Analytics skipped in incremental mode — run full refresh for cross-ticker analysis)")
+
+
+if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description="Silver Layer — Cleaning & Enrichment")
+    parser.add_argument("--tickers", nargs="+", default=None,
+                        help="Process only these tickers (incremental mode)")
+    args = parser.parse_args()
+    main(tickers=args.tickers)

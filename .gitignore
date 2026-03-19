@@ -3,6 +3,7 @@
 Tests/
 output_raw/
 output_silver/
+.manifest.json
 *.parquet
 *.csv
 

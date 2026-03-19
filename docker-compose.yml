@@ -1,0 +1,34 @@
+services:
+  bronze:
+    build: .
+    command: python Dataflows/ToBronze/sourceToBronzeDataFlow.py
+    volumes:
+      - ./output_raw:/app/output_raw
+
+  silver:
+    build: .
+    command: python Dataflows/ToSilver/bronzeToSilverDataFlow.py
+    volumes:
+      - ./output_raw:/app/output_raw:ro
+      - ./output_silver:/app/output_silver
+    depends_on:
+      bronze:
+        condition: service_completed_successfully
+
+  pipeline:
+    build: .
+    command: python run_pipeline.py
+    volumes:
+      - ./output_raw:/app/output_raw
+      - ./output_silver:/app/output_silver
+    profiles:
+      - full
+
+  dev:
+    build: .
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/app
+    profiles:
+      - dev
