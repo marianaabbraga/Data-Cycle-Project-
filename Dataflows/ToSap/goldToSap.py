@@ -56,6 +56,12 @@ OUTPUT_DIR  = Path(os.getenv("OUTPUT_DIR", "../DataLake/SAP"))
 QUERY_PRICES = """
 SELECT
     -- Dimensions temporelles
+
+    CAST(
+        CAST(d.Year AS VARCHAR) + '-' +
+        RIGHT('0' + CAST(d.Month AS VARCHAR), 2) + '-' +
+        RIGHT('0' + CAST(d.Day AS VARCHAR), 2)
+    AS DATE) AS DateKey,
     d.Year,
     d.Quarter,
     d.Month,
@@ -76,6 +82,8 @@ SELECT
     f.AdjustedClosePrice,
     f.Volume
 
+
+
 FROM FactStockPrices f
 JOIN DimDate     d ON f.DateId     = d.DateId
 JOIN DimTicker   t ON f.TickerId   = t.TickerId
@@ -88,6 +96,12 @@ ORDER BY d.Year, d.Month, d.Day, t.Symbol;
 QUERY_INDICATORS = """
 SELECT
     -- Dimensions temporelles
+
+    CAST(
+        CAST(d.Year AS VARCHAR) + '-' +
+        RIGHT('0' + CAST(d.Month AS VARCHAR), 2) + '-' +
+        RIGHT('0' + CAST(d.Day AS VARCHAR), 2)
+    AS DATE) AS DateKey,
     d.Year,
     d.Quarter,
     d.Month,
@@ -108,6 +122,7 @@ SELECT
     f.macd,
     f.bollinger_bands_down,
     f.bollinger_bands_up
+
 
 FROM FactTechnicalIndicators f
 JOIN DimDate     d ON f.DateId     = d.DateId
