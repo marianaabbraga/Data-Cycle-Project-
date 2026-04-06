@@ -29,8 +29,12 @@ def compute_indicators(df):
     avg_gain = gain.groupby(df["ticker"]).transform(lambda x: x.rolling(14).mean())
     avg_loss = loss.groupby(df["ticker"]).transform(lambda x: x.rolling(14).mean())
 
-    rs = avg_gain / avg_loss
+    # rs = avg_gain / avg_loss
+    # df["rsi"] = 100 - (100 / (1 + rs))
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
     df["rsi"] = 100 - (100 / (1 + rs))
+    df["rsi"] = df["rsi"].fillna(50) 
 
     # MACD (Trend Reversal Detector): Short-term trend - Long-term trend
     # EMA (Exponential Moving Average): Focuses more on recent price than SMA

@@ -48,12 +48,12 @@ FACT_STOCK_PRICES = {
     "TickerId"         : "INT NOT NULL",
     "SectorId"         : "INT NOT NULL",
     "IndustryId"       : "INT NOT NULL",
-    "OpenPrice"        : "FLOAT",
-    "HighPrice"        : "FLOAT",
-    "LowPrice"         : "FLOAT",
-    "ClosePrice"       : "FLOAT",
-    "AdjustedClosePrice": "FLOAT",
-    "Volume"           : "BIGINT",
+    "OpenPrice"        : "DECIMAL(18,2)",      
+    "HighPrice"        : "DECIMAL(18,2)",      
+    "LowPrice"         : "DECIMAL(18,2)",      
+    "ClosePrice"       : "DECIMAL(18,2)",      
+    "AdjustedClosePrice": "DECIMAL(18,2)",   
+    "Volume"           : "BIGINT",             
 }
 
 FACT_TECHNICAL_INDICATORS = {
@@ -61,13 +61,13 @@ FACT_TECHNICAL_INDICATORS = {
     "TickerId"          : "INT NOT NULL",
     "SectorId"          : "INT NOT NULL",
     "IndustryId"        : "INT NOT NULL",
-    "sma20"             : "FLOAT",
-    "sma50"             : "FLOAT",
-    "atr"               : "FLOAT",
-    "rsi"               : "FLOAT",
-    "macd"              : "FLOAT",
-    "bollinger_bands_down": "FLOAT",
-    "bollinger_bands_up"  : "FLOAT",
+    "sma20"             : "DECIMAL(18,2)",
+    "sma50"             : "DECIMAL(18,2)",    
+    "atr"               : "DECIMAL(18,2)",    
+    "rsi"               : "DECIMAL(18,2)",    
+    "macd"              : "DECIMAL(18,2)",     
+    "bollinger_bands_down": "DECIMAL(18,2)",   
+    "bollinger_bands_up"  : "DECIMAL(18,2)",   
 }
 
 # FactPredictedStockPrices intentionally left empty — will be filled later
