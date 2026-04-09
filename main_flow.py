@@ -25,7 +25,9 @@ Environment variables (all optional):
     PIPELINE_CRON         — cron schedule                (default: 0 6 * * *)
 """
 
+import logging
 import os
+from datetime import datetime, timezone
 
 from prefect import flow, get_run_logger
 
@@ -33,6 +35,47 @@ from tasks.bronze_task import run_bronze
 from tasks.silver_task import run_silver
 from tasks.gold_task import run_gold
 from tasks.overwatcher import overwatcher
+
+
+def _setup_pipeline_log(data_dir: str) -> logging.FileHandler | None:
+    """Create a timestamped pipeline log file and return the handler."""
+    logs_dir = os.path.join(data_dir, "pipeline_logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H-%M")
+    log_path = os.path.join(logs_dir, f"pipeline_{ts}.log")
+    handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S"
+    ))
+    return handler, log_path
+
+
+class _PipelineFileLogger:
+    """Thin wrapper: writes to both the Prefect run logger and a file."""
+
+    def __init__(self, prefect_logger, file_handler: logging.FileHandler):
+        self._prefect = prefect_logger
+        self._flog = logging.getLogger("pipeline_run")
+        self._flog.setLevel(logging.DEBUG)
+        self._flog.addHandler(file_handler)
+        self._handler = file_handler
+
+    def info(self, msg, *args):
+        self._prefect.info(msg, *args)
+        self._flog.info(msg, *args)
+
+    def warning(self, msg, *args):
+        self._prefect.warning(msg, *args)
+        self._flog.warning(msg, *args)
+
+    def error(self, msg, *args):
+        self._prefect.error(msg, *args)
+        self._flog.error(msg, *args)
+
+    def close(self):
+        self._handler.flush()
+        self._flog.removeHandler(self._handler)
+        self._handler.close()
 
 
 @flow(name="data-pipeline", log_prints=True)
@@ -47,7 +90,11 @@ def data_pipeline(
     Every parameter falls back to an environment variable, so the same
     code works unchanged on bare-metal and inside Docker.
     """
-    logger = get_run_logger()
+    prefect_logger = get_run_logger()
+    file_handler, log_file = _setup_pipeline_log(data_dir)
+    logger = _PipelineFileLogger(prefect_logger, file_handler)
+
+    logger.info("Pipeline log → %s", log_file)
 
     # ════════════════════════  BRONZE  ════════════════════════════════════
     logger.info("=" * 60)
@@ -55,6 +102,7 @@ def data_pipeline(
     logger.info("=" * 60)
 
     bronze = run_bronze(data_dir=data_dir)
+    logger.info("Bronze finished — manifest_hash=%s", bronze.get("manifest_hash", "N/A"))
 
     bronze_check = overwatcher(
         stage="bronze",
@@ -64,6 +112,8 @@ def data_pipeline(
         use_ai=use_ai,
         model=ai_model,
     )
+    logger.info("Bronze overwatcher — status=%s, hash=%s",
+                bronze_check.get("status"), bronze_check.get("manifest_hash"))
 
     # ════════════════════════  SILVER  ════════════════════════════════════
     logger.info("=" * 60)
@@ -75,6 +125,7 @@ def data_pipeline(
         bronze_output_dir=bronze["output_dir"],
         expected_manifest_hash=bronze_check["manifest_hash"],
     )
+    logger.info("Silver finished — manifest_hash=%s", silver.get("manifest_hash", "N/A"))
 
     silver_check = overwatcher(
         stage="silver",
@@ -84,6 +135,8 @@ def data_pipeline(
         use_ai=use_ai,
         model=ai_model,
     )
+    logger.info("Silver overwatcher — status=%s, hash=%s",
+                silver_check.get("status"), silver_check.get("manifest_hash"))
 
     # ════════════════════════  GOLD  ══════════════════════════════════════
     logger.info("=" * 60)
@@ -95,6 +148,7 @@ def data_pipeline(
         silver_output_dir=silver["output_dir"],
         expected_manifest_hash=silver_check["manifest_hash"],
     )
+    logger.info("Gold finished — manifest_hash=%s", gold.get("manifest_hash", "N/A"))
 
     overwatcher(
         stage="gold",
@@ -109,6 +163,7 @@ def data_pipeline(
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETE")
     logger.info("=" * 60)
+    logger.close()
 
     return {"bronze": bronze, "silver": silver, "gold": gold}
 
