@@ -1,103 +1,95 @@
 """
-Bronze Task — SAP Extraction (mocked for POC)
-==============================================
+Bronze Task — yfinance Raw Data Ingestion
+==========================================
 
-Runs an SAP extraction script via subprocess.  When no real script is
-provided, generates deterministic mock data so the rest of the pipeline
-can be tested end-to-end.
+Runs ``Dataflows/ToBronze/sourceToBronzeDataFlow.py`` as a subprocess,
+captures its stdout/stderr into a log file, and reads back the manifest
+that the script generates (SHA-256 hashes of every output parquet).
 """
 
-import csv
+import json
 import os
 import subprocess
+import sys
 from datetime import datetime
 
 from prefect import task
 from prefect.logging import get_run_logger
 
+SCRIPT_REL = os.path.join("Dataflows", "ToBronze", "sourceToBronzeDataFlow.py")
 
-@task(name="bronze-sap-extract", retries=1, retry_delay_seconds=30)
-def run_bronze(data_dir: str = "./data", sap_script: str | None = None) -> dict:
+
+@task(name="bronze-extract", retries=1, retry_delay_seconds=30)
+def run_bronze(data_dir: str = "./data") -> dict:
     """
     Execute the Bronze stage.
 
-    Parameters
-    ----------
-    data_dir   : root data directory (shared across all stages)
-    sap_script : path to the real SAP extraction script; when *None*,
-                 mock data is generated instead
-
     Returns
     -------
-    dict with ``file`` (CSV path) and ``log`` (log path)
+    dict with ``manifest`` (path), ``log`` (path), ``manifest_hash``,
+    and ``output_dir``.
     """
     logger = get_run_logger()
 
     bronze_dir = os.path.join(data_dir, "bronze")
     os.makedirs(bronze_dir, exist_ok=True)
+    log_file = os.path.join(bronze_dir, "bronze.log")
+    log_lines: list[str] = [f"[{datetime.now().isoformat()}] Bronze stage started"]
 
-    output_file = os.path.join(bronze_dir, "sap_extract.csv")
-    log_file    = os.path.join(bronze_dir, "bronze.log")
-    log: list[str] = []
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    script = os.path.join(project_root, SCRIPT_REL)
 
-    log.append(f"[{datetime.now().isoformat()}] Bronze stage started")
+    if not os.path.isfile(script):
+        raise FileNotFoundError(f"Bronze script not found: {script}")
 
-    # ----- Real SAP script (subprocess) ---------------------------------
-    if sap_script and os.path.exists(sap_script):
-        logger.info(f"Running SAP script: {sap_script}")
-        result = subprocess.run(
-            ["python", sap_script],
-            capture_output=True, text=True, timeout=300,
-        )
-        log.append(f"SAP stdout:\n{result.stdout}")
-        if result.returncode != 0:
-            log.append(f"SAP stderr:\n{result.stderr}")
-            log.append(f"[ERROR] SAP script exited with code {result.returncode}")
+    output_dir = os.path.abspath(os.path.join(data_dir, "bronze", "lake"))
+    env = {**os.environ, "BRONZE_OUTPUT_DIR": output_dir}
 
-    # ----- Mock data (POC) -----------------------------------------------
+    logger.info("Running ToBronze script: %s", script)
+    log_lines.append(f"Script: {script}")
+    log_lines.append(f"Output dir: {output_dir}")
+
+    result = subprocess.run(
+        [sys.executable, script],
+        cwd=project_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+
+    log_lines.append(f"--- stdout ---\n{result.stdout}")
+    if result.stderr:
+        log_lines.append(f"--- stderr ---\n{result.stderr}")
+    log_lines.append(f"Exit code: {result.returncode}")
+
+    if result.returncode != 0:
+        log_lines.append(f"[ERROR] ToBronze exited with code {result.returncode}")
+        logger.error("ToBronze failed (exit %d): %s", result.returncode, result.stderr[:500])
+
+    manifest_path = os.path.join(output_dir, "bronze_manifest.json")
+    manifest_hash = ""
+    if os.path.isfile(manifest_path):
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        manifest_hash = manifest.get("manifest_hash", "")
+        n_files = len(manifest.get("files", []))
+        log_lines.append(f"Manifest: {n_files} files, hash={manifest_hash[:16]}...")
+        logger.info("Bronze complete: %d files, manifest_hash=%s", n_files, manifest_hash[:16])
     else:
-        logger.info("No SAP script provided — generating mock data")
-        _generate_mock_data(output_file)
-        log.append(f"Mock data written -> {output_file}")
+        log_lines.append("[CRITICAL] No manifest generated!")
+        logger.error("Bronze manifest not found at %s", manifest_path)
 
-    # ----- Row count validation ------------------------------------------
-    if os.path.exists(output_file):
-        with open(output_file, "r") as fh:
-            row_count = sum(1 for _ in fh) - 1
-        log.append(f"Output: {row_count} rows in {output_file}")
-        logger.info(f"Bronze output: {row_count} rows")
-    else:
-        log.append("[CRITICAL] No output file generated!")
-
-    log.append(f"[{datetime.now().isoformat()}] Bronze stage completed")
-
+    log_lines.append(f"[{datetime.now().isoformat()}] Bronze stage completed")
     with open(log_file, "w") as fh:
-        fh.write("\n".join(log))
+        fh.write("\n".join(log_lines))
 
-    return {"file": output_file, "log": log_file}
+    if result.returncode != 0:
+        raise RuntimeError(f"ToBronze script failed with exit code {result.returncode}")
 
-
-# ---------------------------------------------------------------------- #
-#  Mock helpers                                                           #
-# ---------------------------------------------------------------------- #
-
-def _generate_mock_data(output_path: str):
-    """Write a small SAP-style CSV so downstream stages have something to work with."""
-    headers = [
-        "material_id", "plant", "quantity", "unit",
-        "posting_date", "document_number", "movement_type",
-    ]
-    rows = [
-        ["MAT001", "1000", "150.00", "KG",  "2026-03-18", "4900001234", "101"],
-        ["MAT002", "1000", "75.50",  "L",   "2026-03-18", "4900001235", "101"],
-        ["MAT003", "2000", "200.00", "PC",  "2026-03-18", "4900001236", "201"],
-        ["MAT001", "2000", "50.00",  "KG",  "2026-03-17", "4900001237", "101"],
-        ["MAT004", "1000", "300.00", "KG",  "2026-03-17", "4900001238", "311"],
-        ["MAT002", "3000", "120.00", "L",   "2026-03-16", "4900001239", "101"],
-        ["MAT005", "1000", "85.25",  "PC",  "2026-03-16", "4900001240", "201"],
-        ["MAT003", "3000", "60.00",  "PC",  "2026-03-15", "4900001241", "311"],
-    ]
-    with open(output_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(headers)
-        w.writerows(rows)
+    return {
+        "manifest": manifest_path,
+        "log": log_file,
+        "manifest_hash": manifest_hash,
+        "output_dir": output_dir,
+    }

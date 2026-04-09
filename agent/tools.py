@@ -7,7 +7,7 @@ Marvin reads the signature + docstring to decide when to call each one.
 
 import json
 import os
-from datetime import datetime
+from glob import glob
 
 import httpx
 import pandas as pd
@@ -85,50 +85,59 @@ def trigger_pipeline(stage: str = "full") -> str:
 #  Data queries                                                              #
 # ========================================================================== #
 
+def _find_parquets(lake_dir: str) -> list[str]:
+    """Recursively find all .parquet files under *lake_dir*."""
+    return sorted(glob(os.path.join(lake_dir, "**", "*.parquet"), recursive=True))
+
+
 def get_row_counts() -> str:
-    """Get row counts for bronze CSV and silver Parquet files."""
-    counts = {}
+    """Get row counts for bronze and silver parquet files."""
+    counts: dict[str, str] = {}
 
-    bronze_csv = os.path.join(DATA_DIR, "bronze", "sap_extract.csv")
-    if os.path.exists(bronze_csv):
-        try:
-            df = pd.read_csv(bronze_csv)
-            counts["bronze (sap_extract.csv)"] = len(df)
-        except Exception as e:
-            counts["bronze"] = f"error reading: {e}"
-    else:
-        counts["bronze"] = "no file yet"
+    for stage in ("bronze", "silver"):
+        lake = os.path.join(DATA_DIR, stage, "lake")
+        if not os.path.isdir(lake):
+            counts[stage] = "no data yet"
+            continue
+        files = _find_parquets(lake)
+        if not files:
+            counts[stage] = "lake dir exists but no parquet files"
+            continue
+        total_rows = 0
+        for f in files:
+            try:
+                total_rows += len(pd.read_parquet(f))
+            except Exception:
+                pass
+        counts[stage] = f"{total_rows} rows across {len(files)} parquet files"
 
-    silver_parquet = os.path.join(DATA_DIR, "silver", "cleaned_data.parquet")
-    if os.path.exists(silver_parquet):
-        try:
-            df = pd.read_parquet(silver_parquet)
-            counts["silver (cleaned_data.parquet)"] = len(df)
-        except Exception as e:
-            counts["silver"] = f"error reading: {e}"
-    else:
-        counts["silver"] = "no file yet"
-
-    return "\n".join(f"  {k}: {v} rows" if isinstance(v, int) else f"  {k}: {v}"
-                     for k, v in counts.items())
+    return "\n".join(f"  {k}: {v}" for k, v in counts.items())
 
 
 def preview_data(stage: str = "bronze", rows: int = 5) -> str:
     """Preview the first N rows of a stage's output. stage: 'bronze' or 'silver'."""
-    if stage == "bronze":
-        path = os.path.join(DATA_DIR, "bronze", "sap_extract.csv")
-        if not os.path.exists(path):
-            return "No bronze data yet."
-        df = pd.read_csv(path)
-    elif stage == "silver":
-        path = os.path.join(DATA_DIR, "silver", "cleaned_data.parquet")
-        if not os.path.exists(path):
-            return "No silver data yet."
-        df = pd.read_parquet(path)
-    else:
+    if stage not in ("bronze", "silver"):
         return f"Unknown stage '{stage}'. Use 'bronze' or 'silver'."
 
-    return df.head(rows).to_string(index=False)
+    lake = os.path.join(DATA_DIR, stage, "lake")
+    if not os.path.isdir(lake):
+        return f"No {stage} data yet (lake directory doesn't exist)."
+
+    files = _find_parquets(lake)
+    if not files:
+        return f"No parquet files found in {lake}."
+
+    # Show a sample from the first file found
+    sample_file = files[0]
+    rel = os.path.relpath(sample_file, lake)
+    try:
+        df = pd.read_parquet(sample_file)
+    except Exception as e:
+        return f"Error reading {rel}: {e}"
+
+    header = f"[{rel}] ({len(df)} rows total, showing first {rows})\n"
+    header += f"({len(files)} parquet files in {stage}/lake total)\n\n"
+    return header + df.head(rows).to_string(index=False)
 
 
 # ========================================================================== #

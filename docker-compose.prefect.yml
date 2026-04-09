@@ -78,9 +78,12 @@ services:
       DB_PASSWORD:         "${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}"
       OPENAI_API_KEY:      "${OPENAI_API_KEY:-}"
       OPENAI_BASE_URL:     "${OPENAI_BASE_URL:-}"
+      OLLAMA_MODEL:        "${OLLAMA_MODEL:-}"
       USE_AI_ANALYSIS:     "${USE_AI_ANALYSIS:-false}"
       MARVIN_AGENT_MODEL:  "${MARVIN_AGENT_MODEL:-openai:gpt-4o-mini}"
       PIPELINE_CRON:       "${PIPELINE_CRON:-0 6 * * *}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
     restart: unless-stopped
@@ -101,7 +104,11 @@ services:
       DATA_DIR:            /app/data
       OPENAI_API_KEY:      "${OPENAI_API_KEY:-}"
       OPENAI_BASE_URL:     "${OPENAI_BASE_URL:-}"
+      OLLAMA_MODEL:        "${OLLAMA_MODEL:-}"
+      MARVIN_AGENT_RETRIES: "${MARVIN_AGENT_RETRIES:-5}"
       MARVIN_AGENT_MODEL:  "${MARVIN_AGENT_MODEL:-openai:gpt-4o-mini}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

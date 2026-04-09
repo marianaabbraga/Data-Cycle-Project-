@@ -1,0 +1,3 @@
+sudo systemctl stop ollama
+sudo systemctl set-environment OLLAMA_HOST=0.0.0.0:11434
+sudo systemctl start ollama

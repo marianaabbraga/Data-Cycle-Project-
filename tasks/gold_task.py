@@ -1,172 +1,169 @@
 """
-Gold Task — Incremental SQL Server Load
-========================================
+Gold Task — Final Layer Load
+=============================
 
-Reads the cleaned Parquet from Silver, ensures the target table exists,
-and performs an incremental INSERT into Microsoft SQL Server.
+Runs ``Dataflows/ToGold/silverToGoldDataFlow.py`` as a subprocess.
+If the script is empty / not implemented yet, the task logs a warning
+and returns gracefully so the pipeline doesn't crash.
 
-Rows that violate a PK/unique constraint are skipped — the philosophy is
-that the pipeline only *adds* data; constraint violations are a DB-level
-concern, not a pipeline error.
+Before launching, optionally verifies the silver output hasn't been
+tampered with by re-checking its manifest hash.
 """
 
+import hashlib
+import json
 import os
+import subprocess
+import sys
 from datetime import datetime
 
-import pandas as pd
-import pyodbc
 from prefect import task
 from prefect.logging import get_run_logger
 
-
-# Schema for the mock SAP material-movements table.
-# Extend or replace this when real SAP tables are defined.
-MATERIAL_MOVEMENTS = {
-    "columns": {
-        "material_id":       "NVARCHAR(20)",
-        "plant":             "NVARCHAR(10)",
-        "quantity":          "FLOAT",
-        "unit":              "NVARCHAR(10)",
-        "posting_date":      "DATE",
-        "document_number":   "NVARCHAR(20)",
-        "movement_type":     "NVARCHAR(10)",
-        "_silver_timestamp": "NVARCHAR(50)",
-        "_source_file":      "NVARCHAR(255)",
-    },
-    "primary_key": ["document_number", "material_id"],
-}
+SCRIPT_REL = os.path.join("Dataflows", "ToGold", "silverToGoldDataFlow.py")
 
 
-# ========================================================================== #
-#  Prefect task                                                              #
-# ========================================================================== #
+def _verify_input_manifest(manifest_path: str, expected_hash: str, logger):
+    """Re-hash every file listed in *manifest_path* and compare to *expected_hash*."""
+    with open(manifest_path) as f:
+        manifest = json.load(f)
 
-@task(name="gold-sql-load", retries=1, retry_delay_seconds=30)
+    output_dir = manifest["output_dir"]
+    entries = manifest.get("files", [])
+    recomputed: list[str] = []
+
+    for entry in sorted(entries, key=lambda e: e["path"]):
+        fpath = os.path.join(output_dir, entry["path"])
+        if not os.path.isfile(fpath):
+            raise FileNotFoundError(
+                f"Input verification failed: file listed in manifest is missing: {fpath}"
+            )
+        h = hashlib.sha256()
+        with open(fpath, "rb") as fh:
+            for chunk in iter(lambda: fh.read(8192), b""):
+                h.update(chunk)
+        recomputed.append(f"{entry['path']}:{h.hexdigest()}")
+
+    actual_hash = hashlib.sha256("\n".join(recomputed).encode()).hexdigest()
+    if actual_hash != expected_hash:
+        raise ValueError(
+            f"Input manifest hash mismatch — expected {expected_hash}, "
+            f"got {actual_hash}. Silver output may have been modified."
+        )
+    logger.info("Input manifest verified: hash=%s (%d files)", expected_hash[:16], len(entries))
+
+
+@task(name="gold-load", retries=1, retry_delay_seconds=30)
 def run_gold(
     data_dir: str = "./data",
-    silver_file: str | None = None,
-    db_server: str = "localhost",
-    db_name: str = "DataCycle",
-    db_user: str = "sa",
-    db_password: str | None = None,
-    trusted: bool = False,
+    silver_output_dir: str | None = None,
+    expected_manifest_hash: str | None = None,
 ) -> dict:
     """
     Execute the Gold stage.
 
+    Parameters
+    ----------
+    data_dir              : root data directory
+    silver_output_dir     : path to the Silver lake directory
+    expected_manifest_hash: hash from the silver overwatcher to verify input integrity
+
     Returns
     -------
-    dict with ``log`` (log path) and ``rows_inserted`` count
+    dict with ``manifest``, ``log``, ``manifest_hash``, ``output_dir``
     """
     logger = get_run_logger()
-
-    if silver_file is None:
-        silver_file = os.path.join(data_dir, "silver", "cleaned_data.parquet")
 
     gold_dir = os.path.join(data_dir, "gold")
     os.makedirs(gold_dir, exist_ok=True)
     log_file = os.path.join(gold_dir, "gold.log")
-    log: list[str] = []
+    log_lines: list[str] = [f"[{datetime.now().isoformat()}] Gold stage started"]
 
-    log.append(f"[{datetime.now().isoformat()}] Gold stage started")
-    log.append(f"Input: {silver_file}")
-    log.append(f"Target: {db_server}/{db_name}")
+    if silver_output_dir is None:
+        silver_output_dir = os.path.abspath(os.path.join(data_dir, "silver", "lake"))
 
-    df = pd.read_parquet(silver_file)
-    log.append(f"Loaded {len(df)} rows from silver")
-    logger.info(f"Gold: loading {len(df)} rows into SQL Server")
+    # Verify silver output integrity before processing
+    if expected_manifest_hash:
+        silver_manifest = os.path.join(silver_output_dir, "silver_manifest.json")
+        if os.path.isfile(silver_manifest):
+            _verify_input_manifest(silver_manifest, expected_manifest_hash, logger)
+            log_lines.append(f"Input integrity verified (hash={expected_manifest_hash[:16]}...)")
+        else:
+            logger.warning("Silver manifest not found at %s — skipping verification", silver_manifest)
+            log_lines.append("[WARNING] Silver manifest missing, cannot verify input")
 
-    conn = _connect(db_server, db_name, db_user, db_password, trusted)
-    log.append("Connected to SQL Server")
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    script = os.path.join(project_root, SCRIPT_REL)
 
-    try:
-        table_name = "dbo.material_movements"
+    if not os.path.isfile(script):
+        msg = f"Gold script not found: {script}"
+        logger.warning(msg)
+        log_lines.append(f"[WARNING] {msg} — skipping Gold stage")
+        with open(log_file, "w") as fh:
+            fh.write("\n".join(log_lines))
+        return {"manifest": None, "log": log_file, "manifest_hash": "", "output_dir": ""}
 
-        _create_table(conn, table_name,
-                       MATERIAL_MOVEMENTS["columns"],
-                       MATERIAL_MOVEMENTS["primary_key"])
-        log.append(f"Table [{table_name}] ready")
+    # Check if script is empty (not implemented yet)
+    if os.path.getsize(script) == 0:
+        logger.warning("ToGold script is empty — Gold stage not yet implemented, skipping")
+        log_lines.append("[WARNING] ToGold script is empty — skipping")
+        log_lines.append(f"[{datetime.now().isoformat()}] Gold stage skipped (not implemented)")
+        with open(log_file, "w") as fh:
+            fh.write("\n".join(log_lines))
+        return {"manifest": None, "log": log_file, "manifest_hash": "", "output_dir": ""}
 
-        inserted = _insert_rows(conn, table_name, df)
-        log.append(f"Inserted {inserted}/{len(df)} rows")
-        logger.info(f"Gold: {inserted}/{len(df)} rows inserted")
-    finally:
-        conn.close()
-        log.append("Connection closed")
+    output_dir = os.path.abspath(os.path.join(data_dir, "gold", "lake"))
+    env = {
+        **os.environ,
+        "SILVER_INPUT_DIR": silver_output_dir,
+        "GOLD_OUTPUT_DIR": output_dir,
+    }
 
-    log.append(f"[{datetime.now().isoformat()}] Gold stage completed")
+    logger.info("Running ToGold script: %s", script)
+    log_lines.append(f"Script: {script}")
+    log_lines.append(f"Silver input dir: {silver_output_dir}")
+    log_lines.append(f"Gold output dir: {output_dir}")
 
-    with open(log_file, "w") as fh:
-        fh.write("\n".join(log))
-
-    return {"log": log_file, "rows_inserted": inserted}
-
-
-# ========================================================================== #
-#  DB helpers (mirrors Dataflows/ToGold/factTables.py)                       #
-# ========================================================================== #
-
-def _connect(server, database, user, password, trusted):
-    driver = "{ODBC Driver 18 for SQL Server}"
-    if trusted:
-        cs = (f"DRIVER={driver};SERVER={server};"
-              f"DATABASE={database};Trusted_Connection=yes;"
-              f"TrustServerCertificate=yes;")
-    else:
-        cs = (f"DRIVER={driver};SERVER={server};"
-              f"DATABASE={database};UID={user};PWD={password};"
-              f"TrustServerCertificate=yes;")
-    return pyodbc.connect(cs)
-
-
-def _create_table(conn, table_name, columns, primary_key=None):
-    col_defs = ", ".join(f"[{c}] {t}" for c, t in columns.items())
-    pk = ""
-    if primary_key:
-        pk_cols = ", ".join(f"[{c}]" for c in primary_key)
-        pk = f", CONSTRAINT PK_{table_name.replace('.', '_')} PRIMARY KEY ({pk_cols})"
-
-    sql = f"""
-    IF NOT EXISTS (
-        SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-        WHERE TABLE_NAME = '{table_name.split('.')[-1]}'
+    result = subprocess.run(
+        [sys.executable, script],
+        cwd=project_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
-    BEGIN
-        CREATE TABLE {table_name} ({col_defs}{pk})
-    END"""
-    cur = conn.cursor()
-    cur.execute(sql)
-    conn.commit()
 
+    log_lines.append(f"--- stdout ---\n{result.stdout}")
+    if result.stderr:
+        log_lines.append(f"--- stderr ---\n{result.stderr}")
+    log_lines.append(f"Exit code: {result.returncode}")
 
-def _insert_rows(conn, table_name, df, batch_size=1000):
-    if df.empty:
-        return 0
+    if result.returncode != 0:
+        log_lines.append(f"[ERROR] ToGold exited with code {result.returncode}")
+        logger.error("ToGold failed (exit %d): %s", result.returncode, result.stderr[:500])
 
-    cols = df.columns.tolist()
-    col_list = ", ".join(f"[{c}]" for c in cols)
-    placeholders = ", ".join("?" for _ in cols)
-    sql = f"INSERT INTO {table_name} ({col_list}) VALUES ({placeholders})"
+    manifest_path = os.path.join(output_dir, "gold_manifest.json")
+    manifest_hash = ""
+    if os.path.isfile(manifest_path):
+        with open(manifest_path) as f:
+            manifest = json.load(f)
+        manifest_hash = manifest.get("manifest_hash", "")
+        n_files = len(manifest.get("files", []))
+        log_lines.append(f"Manifest: {n_files} files, hash={manifest_hash[:16]}...")
+        logger.info("Gold complete: %d files, manifest_hash=%s", n_files, manifest_hash[:16])
+    else:
+        log_lines.append("[WARNING] No manifest generated by ToGold")
 
-    cur = conn.cursor()
-    cur.fast_executemany = True
-    rows = [tuple(r) for r in df.itertuples(index=False, name=None)]
-    inserted = 0
+    log_lines.append(f"[{datetime.now().isoformat()}] Gold stage completed")
+    with open(log_file, "w") as fh:
+        fh.write("\n".join(log_lines))
 
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i : i + batch_size]
-        try:
-            cur.executemany(sql, batch)
-            conn.commit()
-            inserted += len(batch)
-        except pyodbc.IntegrityError:
-            conn.rollback()
-            for row in batch:
-                try:
-                    cur.execute(sql, row)
-                    conn.commit()
-                    inserted += 1
-                except pyodbc.IntegrityError:
-                    conn.rollback()
+    if result.returncode != 0:
+        raise RuntimeError(f"ToGold script failed with exit code {result.returncode}")
 
-    return inserted
+    return {
+        "manifest": manifest_path if os.path.isfile(manifest_path) else None,
+        "log": log_file,
+        "manifest_hash": manifest_hash,
+        "output_dir": output_dir,
+    }

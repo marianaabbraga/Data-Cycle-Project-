@@ -1,16 +1,18 @@
+import hashlib
+import json
 import os
 import pandas as pd
 import numpy as np
 from glob import glob
-from datetime import datetime
+from datetime import datetime, timezone
 from sklearn.cluster import KMeans
 
 # ==============================================================================
 # CONFIG
 # ==============================================================================
 
-BRONZE_DIR = r"..\DataLake\Bronze"
-SILVER_DIR = "output_silver"
+BRONZE_DIR = os.environ.get("BRONZE_INPUT_DIR", os.path.join("..", "DataLake", "Bronze"))
+SILVER_DIR = os.environ.get("SILVER_OUTPUT_DIR", "output_silver")
 
 os.makedirs(SILVER_DIR, exist_ok=True)
 
@@ -276,6 +278,55 @@ save_hive_partitioned(
     os.path.join(SILVER_DIR, "technical_indicators")
 )
 
-print("\n✅ Silver Layer DONE")
+print("\nSilver Layer DONE")
 
 analytics(price_history)
+
+# ==============================================================================
+# MANIFEST
+# ==============================================================================
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _generate_manifest(output_dir, stage):
+    """Walk *output_dir*, hash every .parquet file, and write a manifest JSON."""
+    entries = []
+    for root, _dirs, files in os.walk(output_dir):
+        for fname in sorted(files):
+            if not fname.endswith(".parquet"):
+                continue
+            fpath = os.path.join(root, fname)
+            rel = os.path.relpath(fpath, output_dir)
+            entries.append({
+                "path": rel,
+                "sha256": _sha256(fpath),
+                "size_bytes": os.path.getsize(fpath),
+            })
+    entries.sort(key=lambda e: e["path"])
+
+    combo = "\n".join(f"{e['path']}:{e['sha256']}" for e in entries)
+    manifest_hash = hashlib.sha256(combo.encode()).hexdigest()
+
+    manifest = {
+        "stage": stage,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "output_dir": os.path.abspath(output_dir),
+        "files": entries,
+        "manifest_hash": manifest_hash,
+    }
+
+    manifest_path = os.path.join(output_dir, f"{stage}_manifest.json")
+    with open(manifest_path, "w") as f:
+        json.dump(manifest, f, indent=2)
+
+    print(f"\nManifest: {manifest_path}  ({len(entries)} files, hash={manifest_hash[:16]}...)")
+    return manifest_path
+
+
+_generate_manifest(SILVER_DIR, "silver")
