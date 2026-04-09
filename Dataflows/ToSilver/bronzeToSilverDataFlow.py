@@ -1,3 +1,5 @@
+import hashlib
+import json as _json
 import os
 import pandas as pd
 
@@ -114,3 +116,36 @@ else:
     print("\n✅ Silver Layer DONE")
 
     analytics(price_history)
+
+# ── Manifest generation (SHA-256 hashes of all output files) ─────────────────
+from datetime import datetime as _dt
+from glob import glob as _glob
+
+def _sha256(filepath):
+    h = hashlib.sha256()
+    with open(filepath, "rb") as fh:
+        for chunk in iter(lambda: fh.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _generate_manifest(output_dir, stage):
+    files = sorted(_glob(os.path.join(output_dir, "**", "*.parquet"), recursive=True))
+    entries = []
+    for fp in files:
+        rel = os.path.relpath(fp, output_dir)
+        entries.append({"path": rel, "sha256": _sha256(fp)})
+    composite = "\n".join(f"{e['path']}:{e['sha256']}" for e in entries)
+    manifest_hash = hashlib.sha256(composite.encode()).hexdigest()
+    manifest = {
+        "stage": stage,
+        "generated_at": _dt.now().isoformat(),
+        "output_dir": os.path.abspath(output_dir),
+        "manifest_hash": manifest_hash,
+        "files": entries,
+    }
+    manifest_path = os.path.join(output_dir, f"{stage}_manifest.json")
+    with open(manifest_path, "w") as fh:
+        _json.dump(manifest, fh, indent=2)
+    print(f"\n📋 {stage} manifest: {len(entries)} files, hash={manifest_hash[:16]}…")
+
+_generate_manifest(SILVER_DIR, "silver")

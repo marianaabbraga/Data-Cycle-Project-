@@ -29,6 +29,7 @@ def connect(server: str, database: str, driver: str = "{ODBC Driver 17 for SQL S
             f"SERVER={server};"
             f"DATABASE={database};"
             f"Trusted_Connection=yes;"
+            f"TrustServerCertificate=yes;"
         )
     else:
         conn_str = (
@@ -37,6 +38,7 @@ def connect(server: str, database: str, driver: str = "{ODBC Driver 17 for SQL S
             f"DATABASE={database};"
             f"UID={username};"
             f"PWD={password};"
+            f"TrustServerCertificate=yes;"
         )
 
     conn = pyodbc.connect(conn_str)

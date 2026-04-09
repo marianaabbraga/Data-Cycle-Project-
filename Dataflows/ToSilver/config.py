@@ -4,10 +4,8 @@ import os
 # CONFIG
 # ==============================================================================
 
-BRONZE_DIR = r"..\DataLake\Bronze"
-SILVER_DIR = r"..\DataLake\Silver"
-# BRONZE_DIR = "Bronze"
-# SILVER_DIR = "Silver"
+BRONZE_DIR = os.getenv("BRONZE_INPUT_DIR", r"..\DataLake\Bronze")
+SILVER_DIR = os.getenv("SILVER_OUTPUT_DIR", r"..\DataLake\Silver")
 
 # [INCREMENTAL] Path to the watermark file that records the last successful run.
 # Silver reads this to know which Bronze files are new; Bronze writes it after

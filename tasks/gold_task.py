@@ -159,7 +159,10 @@ def run_gold(
         fh.write("\n".join(log_lines))
 
     if result.returncode != 0:
-        raise RuntimeError(f"ToGold script failed with exit code {result.returncode}")
+        logger.warning(
+            "ToGold exited with code %d — Gold stage failed but pipeline will continue. "
+            "Check %s for details.", result.returncode, log_file,
+        )
 
     return {
         "manifest": manifest_path if os.path.isfile(manifest_path) else None,

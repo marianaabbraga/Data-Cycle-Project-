@@ -3,7 +3,7 @@ import pandas as pd
 from glob import glob
 import numpy as np
 
-from config import SILVER_DIR, DB_SERVER, DB_DATABASE
+from config import SILVER_DIR, DB_SERVER, DB_DATABASE, DB_USER, DB_PASSWORD, DB_DRIVER
 from watermark import load_watermark_gold, save_watermark_gold
 from factTables import connect, insert_from_dataframe, merge_into_table, delete_and_insert
 from goldSchema import create_all_tables
@@ -202,7 +202,11 @@ print("Gold Layer Processing (Silver → SQL Server Star Schema)")
 print("=" * 60)
 
 # ── 1. Connect ────────────────────────────────────────────────────────────────
-conn = connect(DB_SERVER, DB_DATABASE)
+if DB_USER:
+    conn = connect(DB_SERVER, DB_DATABASE, driver=DB_DRIVER,
+                   trusted=False, username=DB_USER, password=DB_PASSWORD)
+else:
+    conn = connect(DB_SERVER, DB_DATABASE, driver=DB_DRIVER)
 
 # ── 2. Ensure all Gold tables exist (idempotent) ──────────────────────────────
 create_all_tables(conn)

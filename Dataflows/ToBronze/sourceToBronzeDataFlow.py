@@ -15,8 +15,7 @@ PORTFOLIO = ["AAPL", "MSFT", "NVDA"]
 ETF_PORTFOLIO = ["SPY", "QQQ"]
 MARKETS = ["us_market", "eu_market"]
 START_DATE = "2016-01-01"
-OUTPUT_DIR = r"..\DataLake\Bronze"
-# OUTPUT_DIR = "Bronze"
+OUTPUT_DIR = os.getenv("BRONZE_OUTPUT_DIR", r"..\DataLake\Bronze")
 
 SUBFOLDERS = ["ticker", "market", "sector_industry", "equity", "funds"]
 
@@ -473,3 +472,37 @@ print("\nUS-7 complete.")
 print("\n" + "=" * 60)
 print("✅ Bronze extraction complete.")
 print("=" * 60)
+
+# ── Manifest generation (SHA-256 hashes of all output files) ─────────────────
+import json as _json
+
+def _sha256(filepath):
+    h = hashlib.sha256()
+    with open(filepath, "rb") as fh:
+        for chunk in iter(lambda: fh.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+def _generate_manifest(output_dir, stage):
+    from glob import glob as _glob
+    files = sorted(_glob(os.path.join(output_dir, "**", "*.parquet"), recursive=True))
+    entries = []
+    for fp in files:
+        rel = os.path.relpath(fp, output_dir)
+        entries.append({"path": rel, "sha256": _sha256(fp)})
+    composite = "\n".join(f"{e['path']}:{e['sha256']}" for e in entries)
+    manifest_hash = hashlib.sha256(composite.encode()).hexdigest()
+    manifest = {
+        "stage": stage,
+        "generated_at": datetime.now().isoformat(),
+        "output_dir": os.path.abspath(output_dir),
+        "manifest_hash": manifest_hash,
+        "files": entries,
+    }
+    manifest_path = os.path.join(output_dir, f"{stage}_manifest.json")
+    with open(manifest_path, "w") as fh:
+        _json.dump(manifest, fh, indent=2)
+    print(f"\n📋 {stage} manifest: {len(entries)} files, hash={manifest_hash[:16]}…")
+    return manifest_path
+
+_generate_manifest(OUTPUT_DIR, "bronze")

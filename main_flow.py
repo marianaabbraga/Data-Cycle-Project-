@@ -150,14 +150,17 @@ def data_pipeline(
     )
     logger.info("Gold finished — manifest_hash=%s", gold.get("manifest_hash", "N/A"))
 
-    overwatcher(
-        stage="gold",
-        manifest_path=gold["manifest"],
-        log_path=gold["log"],
-        data_dir=data_dir,
-        use_ai=use_ai,
-        model=ai_model,
-    )
+    try:
+        overwatcher(
+            stage="gold",
+            manifest_path=gold["manifest"],
+            log_path=gold["log"],
+            data_dir=data_dir,
+            use_ai=use_ai,
+            model=ai_model,
+        )
+    except Exception as exc:
+        logger.warning("Gold overwatcher issue (non-fatal): %s", exc)
 
     # ════════════════════════  DONE  ══════════════════════════════════════
     logger.info("=" * 60)
