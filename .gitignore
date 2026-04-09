@@ -13,3 +13,15 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Secrets
+.env
+
+# Pipeline data (keep folder structure via .gitkeep, ignore contents)
+data/**
+!data/.gitkeep
+!data/bronze/.gitkeep
+!data/silver/.gitkeep
+!data/gold/.gitkeep
+chain_of_custody.json
+.manifest.json
