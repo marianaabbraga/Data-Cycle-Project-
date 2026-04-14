@@ -12,12 +12,12 @@ from pathlib import Path
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 SILVER_PRICE_HISTORY_DIR = Path("../DataLake/Silver/price_history")   # adjust to your actual path
-GOLD_OUTPUT_DIR          = Path("../DataLake/Knime")     # adjust to your actual path
+GOLD_OUTPUT_DIR          = Path("../DataLake/Knime/input")     # adjust to your actual path
 
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def consolidate_ticker(ticker_path: Path, output_dir: Path) -> None:
+def consolidate_ticker(ticker_path: Path, output_dir: Path, stocks_master: pd.DataFrame) -> None:
     """
     Reads all yearly parquet files for a single ticker, concatenates them,
     sorts by date, and writes a single parquet file to output_dir.
@@ -64,6 +64,9 @@ def consolidate_ticker(ticker_path: Path, output_dir: Path) -> None:
         if dupes:
             print(f"  [INFO] {ticker} — removed {dupes} duplicate row(s)")
 
+    # Add sector and industry from stocks_master
+    combined = combined.merge(stocks_master, on="ticker", how="left")
+
     # Write output
     output_path = output_dir / f"{ticker}.parquet"
     combined.to_parquet(output_path, index=False)
@@ -83,11 +86,17 @@ def _detect_date_column(df: pd.DataFrame) -> str | None:
     return None
 
 
+STOCKS_MASTER_PATH = Path("../DataLake/Silver/stocks_master/data.parquet")
+
+
 def main():
     if not SILVER_PRICE_HISTORY_DIR.exists():
         raise FileNotFoundError(f"Silver directory not found: {SILVER_PRICE_HISTORY_DIR}")
 
     GOLD_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Load sector/industry lookup table
+    stocks_master = pd.read_parquet(STOCKS_MASTER_PATH)[["ticker", "sector", "industry"]]
 
     ticker_dirs = [p for p in sorted(SILVER_PRICE_HISTORY_DIR.iterdir()) if p.is_dir()]
 
@@ -99,7 +108,7 @@ def main():
     print(f"Output directory: {GOLD_OUTPUT_DIR}\n")
 
     for ticker_path in ticker_dirs:
-        consolidate_ticker(ticker_path, GOLD_OUTPUT_DIR)
+        consolidate_ticker(ticker_path, GOLD_OUTPUT_DIR, stocks_master)
 
     print(f"\nDone. {len(ticker_dirs)} ticker(s) processed.")
 
