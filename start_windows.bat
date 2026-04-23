@@ -1,6 +1,6 @@
 @echo off
 setlocal enabledelayedexpansion
-
+set PYTHONUTF8=1
 REM ============================================================
 REM  Start the Data Cycle pipeline on Windows (no Docker)
 REM
