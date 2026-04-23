@@ -18,8 +18,8 @@ REM  Prepare log file
 REM ------------------------------------------------------------
 if not exist "logs" mkdir "logs"
 
-for /f "tokens=2 delims==" %%I in ('wmic os get localdatetime /value') do set "LDT=%%I"
-set "STAMP=!LDT:~0,8!_!LDT:~8,6!"
+for /f "usebackq delims=" %%I in (`powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"`) do set "STAMP=%%I"
+if "!STAMP!"=="" set "STAMP=run"
 set "LOGFILE=logs\pipeline_!STAMP!.log"
 
 call :log "============================================================"
@@ -61,7 +61,7 @@ call :log "  Prefect API : %PREFECT_API_URL%"
 call :log "  Data dir    : %DATA_DIR%"
 call :log "  DB Server   : %DB_SERVER%"
 call :log "  DB Name     : %DB_NAME%"
-call :log "  Ollama      : %OPENAI_BASE_URL%"
+call :log "  AI analysis : %USE_AI_ANALYSIS%"
 call :log ""
 
 REM ------------------------------------------------------------
@@ -122,11 +122,32 @@ if not exist "main_flow.py" (
 call :log "[CHECK] Prefect server reachable at %PREFECT_API_URL% ?"
 python -c "import os,sys,httpx; r=httpx.get(os.environ['PREFECT_API_URL'].rstrip('/')+'/health', timeout=3); sys.exit(0 if r.status_code==200 else 1)" >>"!LOGFILE!" 2>&1
 if errorlevel 1 (
-    call :log "[WARN] Prefect API not reachable."
-    call :log "       Start it first with:  prefect server start"
-    echo.
-    choice /M "Continue anyway"
-    if errorlevel 2 goto :fail
+    call :log "[WARN] Prefect API not reachable at %PREFECT_API_URL%."
+    call :log "[INFO] Starting 'prefect server start' in a new window..."
+    start "Prefect Server" cmd /k "cd /d %CD% && call !VENV_ACTIVATE! && prefect server start"
+
+    call :log "[WAIT] Waiting for Prefect API to come up (max 180s)..."
+    set "PREFECT_UP=0"
+    for /l %%N in (1,1,60) do (
+        if "!PREFECT_UP!"=="0" (
+            timeout /t 3 /nobreak >nul
+            python -c "import os,sys,httpx; r=httpx.get(os.environ['PREFECT_API_URL'].rstrip('/')+'/health', timeout=2); sys.exit(0 if r.status_code==200 else 1)" >nul 2>&1
+            if not errorlevel 1 (
+                set "PREFECT_UP=1"
+                set /a "ELAPSED=%%N*3"
+                call :log "[OK]   Prefect API is up after ~!ELAPSED!s."
+            ) else (
+                set /a "ELAPSED=%%N*3"
+                if %%N==10 call :log "[WAIT] Still waiting... (!ELAPSED!s elapsed)"
+                if %%N==20 call :log "[WAIT] Still waiting... (!ELAPSED!s elapsed)"
+                if %%N==40 call :log "[WAIT] Still waiting... (!ELAPSED!s elapsed)"
+            )
+        )
+    )
+    if "!PREFECT_UP!"=="0" (
+        call :log "[ERROR] Prefect API still not reachable after 180s. Check the 'Prefect Server' window for errors."
+        goto :fail
+    )
 ) else (
     call :log "[OK]   Prefect API is up."
 )
