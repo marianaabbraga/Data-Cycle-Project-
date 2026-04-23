@@ -1,14 +1,14 @@
 """
 export_to_csv.py
 ────────────────
-Exporte la gold layer du datawarehouse SQL Server vers deux fichiers CSV
-destinés à l'import dans SAP Analytics Cloud (SAC).
+Exports the gold layer of the SQL Server data warehouse to two CSV files
+intended for import into SAP Analytics Cloud (SAC).
 
-Fichiers générés :
+Generated files:
   - stock_prices_daily.csv
   - technical_indicators_daily.csv
 
-Dépendances :
+Dependencies:
   pip install pyodbc pandas python-dotenv
 """
 
@@ -22,7 +22,7 @@ import pyodbc
 from dotenv import load_dotenv
 
 # ─────────────────────────────────────────────
-# Configuration du logging
+# Logging configuration
 # ─────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -32,13 +32,13 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ─────────────────────────────────────────────
-# Chargement des variables d'environnement
-# Créer un fichier .env à la racine du projet :
+# Environment variables
+# Create a .env file at the project root:
 #bc2Dm3hjSbaLqe~O)sH
-#   DB_SERVER=mon_serveur\\SQLEXPRESS   (ou IP)
+#   DB_SERVER=my_server\\SQLEXPRESS   (or IP)
 #   DB_NAME=StockWarehouse
-#   DB_USER=mon_user                    (laisser vide pour Windows Auth)
-#   DB_PASSWORD=mon_mdp                 (laisser vide pour Windows Auth)
+#   DB_USER=my_user                   (leave empty for Windows Auth)
+#   DB_PASSWORD=my_password           (leave empty for Windows Auth)
 #   OUTPUT_DIR=./output
 # ─────────────────────────────────────────────
 load_dotenv()
@@ -51,11 +51,11 @@ OUTPUT_DIR  = Path(os.getenv("OUTPUT_DIR", "../DataLake/SAP"))
 
 
 # ─────────────────────────────────────────────
-# Requêtes SQL dénormalisées
+# Denormalized SQL queries
 # ─────────────────────────────────────────────
 QUERY_PRICES = """
 SELECT
-    -- Dimensions temporelles
+    -- Time dimensions
 
     CAST(
         CAST(d.Year AS VARCHAR) + '-' +
@@ -68,13 +68,13 @@ SELECT
     d.Week,
     d.Day,
 
-    -- Dimensions ticker / secteur
+    -- Ticker / sector dimensions
     t.Symbol,
     t.Name,
     s.Sector,
     i.Industry,
 
-    -- Métriques de prix
+    -- Price metrics
     f.OpenPrice,
     f.HighPrice,
     f.LowPrice,
@@ -95,7 +95,7 @@ ORDER BY d.Year, d.Month, d.Day, t.Symbol;
 
 QUERY_INDICATORS = """
 SELECT
-    -- Dimensions temporelles
+    -- Time dimensions
 
     CAST(
         CAST(d.Year AS VARCHAR) + '-' +
@@ -108,13 +108,13 @@ SELECT
     d.Week,
     d.Day,
 
-    -- Dimensions ticker / secteur
+    -- Ticker / sector dimensions
     t.Symbol,
     t.Name,
     s.Sector,
     i.Industry,
 
-    -- Indicateurs techniques
+    -- Technical indicators
     f.sma20,
     f.sma50,
     f.atr,
@@ -138,11 +138,11 @@ ORDER BY d.Year, d.Month, d.Day, t.Symbol;
 # Helpers
 # ─────────────────────────────────────────────
 def build_connection_string() -> str:
-    """Construit la chaîne de connexion ODBC selon l'auth disponible."""
+    """Builds the ODBC connection string based on available authentication."""
     driver = "ODBC Driver 17 for SQL Server"
 
     if DB_USER and DB_PASSWORD:
-        # Authentification SQL Server
+        # SQL Server authentication
         return (
             f"DRIVER={{{driver}}};"
             f"SERVER={DB_SERVER};"
@@ -151,7 +151,7 @@ def build_connection_string() -> str:
             f"PWD={DB_PASSWORD};"
         )
     else:
-        # Authentification Windows (Trusted Connection)
+        # Windows authentication (Trusted Connection)
         return (
             f"DRIVER={{{driver}}};"
             f"SERVER={DB_SERVER};"
@@ -161,11 +161,11 @@ def build_connection_string() -> str:
 
 
 def get_connection() -> pyodbc.Connection:
-    """Ouvre et retourne une connexion SQL Server."""
+    """Opens and returns a SQL Server connection."""
     conn_str = build_connection_string()
-    log.info("Connexion à %s / %s ...", DB_SERVER, DB_NAME)
+    log.info("Connecting to %s / %s ...", DB_SERVER, DB_NAME)
     conn = pyodbc.connect(conn_str, timeout=30)
-    log.info("Connexion établie.")
+    log.info("Connection established.")
     return conn
 
 
@@ -177,13 +177,13 @@ def export_query_to_csv(
     chunk_size: int = 50_000,
 ) -> Path:
     """
-    Exécute `query`, lit les résultats par chunks et écrit le CSV.
-    Retourne le chemin du fichier créé.
+    Executes `query`, reads results in chunks and writes the CSV.
+    Returns the path of the created file.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     filepath = output_dir / filename
 
-    log.info("Export → %s", filepath)
+    log.info("Exporting → %s", filepath)
     first_chunk = True
     total_rows  = 0
 
@@ -193,41 +193,41 @@ def export_query_to_csv(
             mode="w" if first_chunk else "a",
             header=first_chunk,
             index=False,
-            encoding="utf-8-sig",   # BOM UTF-8 — compatibilité Excel / SAC
+            encoding="utf-8-sig",   # UTF-8 BOM — Excel / SAC compatibility
             sep=",",
-            float_format="%.4f",    # 4 décimales pour les indicateurs financiers
+            float_format="%.4f",    # 4 decimal places for financial indicators
         )
         total_rows  += len(chunk)
         first_chunk  = False
-        log.info("  … %d lignes écrites", total_rows)
+        log.info("  … %d rows written", total_rows)
 
-    log.info("✓ %s — %d lignes au total", filename, total_rows)
+    log.info("✓ %s — %d rows total", filename, total_rows)
     return filepath
 
 
 def add_export_metadata(output_dir: Path, files: list[dict]) -> None:
-    """Génère un petit fichier de log d'export pour traçabilité."""
+    """Generates a small export log file for traceability."""
     meta_path = output_dir / "export_metadata.txt"
     with open(meta_path, "w", encoding="utf-8") as f:
-        f.write(f"Export SAP SAC — {datetime.now().isoformat()}\n")
-        f.write(f"Source : {DB_SERVER} / {DB_NAME}\n\n")
+        f.write(f"SAP SAC Export — {datetime.now().isoformat()}\n")
+        f.write(f"Source: {DB_SERVER} / {DB_NAME}\n\n")
         for item in files:
-            f.write(f"{item['file']}  —  {item['rows']} lignes\n")
-    log.info("Métadonnées écrites → %s", meta_path)
+            f.write(f"{item['file']}  —  {item['rows']} rows\n")
+    log.info("Metadata written → %s", meta_path)
 
 
 # ─────────────────────────────────────────────
-# Point d'entrée
+# Entry point
 # ─────────────────────────────────────────────
 def main() -> None:
     start = datetime.now()
-    log.info("=== Début de l'export ===")
+    log.info("=== Export started ===")
 
     conn = get_connection()
     exported = []
 
     try:
-        # 1. Prix boursiers
+        # 1. Stock prices
         path_prices = export_query_to_csv(
             conn,
             query=QUERY_PRICES,
@@ -236,7 +236,7 @@ def main() -> None:
         )
         exported.append({"file": path_prices.name, "rows": sum(1 for _ in open(path_prices)) - 1})
 
-        # 2. Indicateurs techniques
+        # 2. Technical indicators
         path_indicators = export_query_to_csv(
             conn,
             query=QUERY_INDICATORS,
@@ -247,13 +247,13 @@ def main() -> None:
 
     finally:
         conn.close()
-        log.info("Connexion fermée.")
+        log.info("Connection closed.")
 
     add_export_metadata(OUTPUT_DIR, exported)
 
     elapsed = (datetime.now() - start).total_seconds()
-    log.info("=== Export terminé en %.1f secondes ===", elapsed)
-    log.info("Fichiers disponibles dans : %s", OUTPUT_DIR.resolve())
+    log.info("=== Export completed in %.1f seconds ===", elapsed)
+    log.info("Files available in: %s", OUTPUT_DIR.resolve())
 
 
 if __name__ == "__main__":
