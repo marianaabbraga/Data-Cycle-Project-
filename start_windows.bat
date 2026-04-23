@@ -95,6 +95,24 @@ if errorlevel 1 (
 for /f "delims=" %%V in ('python --version 2^>^&1') do call :log "[INFO] %%V"
 for /f "delims=" %%W in ('python -c "import sys;print(sys.executable)"') do call :log "[INFO] Using interpreter: %%W"
 
+REM ------------------------------------------------------------
+REM  Install / sync dependencies
+REM  Skip with:   set SKIP_INSTALL=1   before running this script
+REM ------------------------------------------------------------
+if /I "%SKIP_INSTALL%"=="1" (
+    call :log "[INFO] SKIP_INSTALL=1 -> skipping pip install."
+) else if exist "requirements.txt" (
+    call :log "[INSTALL] pip install -r requirements.txt"
+    python -m pip install --disable-pip-version-check -r requirements.txt >>"!LOGFILE!" 2>&1
+    if errorlevel 1 (
+        call :log "[ERROR] pip install failed. See !LOGFILE!"
+        goto :fail
+    )
+    call :log "[OK]   Dependencies installed / up-to-date."
+) else (
+    call :log "[WARN] requirements.txt not found -> skipping pip install."
+)
+
 call :log "[CHECK] main_flow.py present?"
 if not exist "main_flow.py" (
     call :log "[ERROR] main_flow.py not found in %CD%"
