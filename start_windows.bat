@@ -65,6 +65,25 @@ call :log "  Ollama      : %OPENAI_BASE_URL%"
 call :log ""
 
 REM ------------------------------------------------------------
+REM  Activate virtualenv if present (venv / .venv / env)
+REM ------------------------------------------------------------
+set "VENV_ACTIVATE="
+if exist "venv\Scripts\activate.bat"  set "VENV_ACTIVATE=venv\Scripts\activate.bat"
+if exist ".venv\Scripts\activate.bat" set "VENV_ACTIVATE=.venv\Scripts\activate.bat"
+if exist "env\Scripts\activate.bat"   set "VENV_ACTIVATE=env\Scripts\activate.bat"
+
+if defined VENV_ACTIVATE (
+    call :log "[INFO] Activating virtualenv: !VENV_ACTIVATE!"
+    call "!VENV_ACTIVATE!"
+    if errorlevel 1 (
+        call :log "[ERROR] Failed to activate venv at !VENV_ACTIVATE!"
+        goto :fail
+    )
+) else (
+    call :log "[WARN] No venv found (looked for venv\, .venv\, env\). Using system Python."
+)
+
+REM ------------------------------------------------------------
 REM  Preflight checks
 REM ------------------------------------------------------------
 call :log "[CHECK] Python available?"
@@ -73,6 +92,8 @@ if errorlevel 1 (
     call :log "[ERROR] Python is not on PATH. Install it or activate your venv."
     goto :fail
 )
+for /f "delims=" %%V in ('python --version 2^>^&1') do call :log "[INFO] %%V"
+for /f "delims=" %%W in ('python -c "import sys;print(sys.executable)"') do call :log "[INFO] Using interpreter: %%W"
 
 call :log "[CHECK] main_flow.py present?"
 if not exist "main_flow.py" (
