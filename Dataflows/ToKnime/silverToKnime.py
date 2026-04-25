@@ -11,8 +11,8 @@ from pathlib import Path
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-SILVER_PRICE_HISTORY_DIR = Path("../DataLake/Silver/price_history")   # adjust to your actual path
-GOLD_OUTPUT_DIR          = Path("../DataLake/Knime/input")     # adjust to your actual path
+SILVER_PRICE_HISTORY_DIR = Path("data/silver/lake/price_history")
+GOLD_OUTPUT_DIR          = Path("data/knime/input")
 
 # ──────────────────────────────────────────────────────────────────────────────
 

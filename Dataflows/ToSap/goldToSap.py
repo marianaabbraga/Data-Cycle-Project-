@@ -47,9 +47,9 @@ DB_SERVER   = os.getenv("DB_SERVER", ".\STOCKSQLSERVER")
 DB_NAME     = os.getenv("DB_NAME",   "stockmarketdb2")
 DB_USER     = os.getenv("DB_USER",   "")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
-OUTPUT_DIR  = Path(os.getenv("OUTPUT_DIR", "../DataLake/SAP"))
+OUTPUT_DIR  = Path(os.getenv("OUTPUT_DIR", r"data\sap"))
 
-
+# C:\DataCycleProject\Data-Cycle-Project-\data\sap"
 # ─────────────────────────────────────────────
 # Denormalized SQL queries
 # ─────────────────────────────────────────────

@@ -6,6 +6,11 @@ import os
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
+import sys
+
+
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
 
 # ==============================================================================
 # CONFIGURATION

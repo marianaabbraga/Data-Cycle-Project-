@@ -48,13 +48,13 @@ def run_bronze(data_dir: str = "./data") -> dict:
     logger.info("Running ToBronze script: %s", script)
     log_lines.append(f"Script: {script}")
     log_lines.append(f"Output dir: {output_dir}")
-
     result = subprocess.run(
         [sys.executable, script],
         cwd=project_root,
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=600,
     )
 
