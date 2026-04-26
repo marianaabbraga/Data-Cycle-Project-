@@ -2,8 +2,9 @@ import pandas as pd
 import pyodbc
 from datetime import datetime
 
-CSV_FILE_PATH = r"C:\DataCycleProject\Data-Cycle-Project-\data\knime\output\predictions.csv"
+from pathlib import Path
 
+CSV_FILE_PATH = Path(__file__).parent / "../../data/knime/output/predictions.csv"
 SQL_SERVER   = r".\STOCKSQLSERVER"
 DATABASE     = "stockmarketdb2"
 # Windows authentication (Trusted_Connection) — replace with
