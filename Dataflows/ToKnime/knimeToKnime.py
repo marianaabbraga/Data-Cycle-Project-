@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ============================================================
-# CONFIG — à personnaliser
+# CONFIG
 # ============================================================
 
 KNIME_API_ID       = os.environ.get("KNIME_API_ID", "")
@@ -19,7 +19,7 @@ KNIME_API_PASSWORD = os.environ.get("KNIME_API_PASSWORD", "")
 
 if not KNIME_API_ID or not KNIME_API_PASSWORD:
     raise EnvironmentError(
-        "❌ KNIME_API_ID ou KNIME_API_PASSWORD manquant dans le fichier .env"
+        "❌ KNIME_API_ID or KNIME_API_PASSWORD missing in .env file"
     )
 
 KNIME_URL       = (
@@ -28,9 +28,9 @@ KNIME_URL       = (
     "execution?reset=false&timeout=-1"
 )
 
-INPUT_DIR       = Path(__file__).parent / "../../data/knime/input"   # <- dossier contenant les parquets
+INPUT_DIR       = Path(__file__).parent / "../../data/knime/input"
 OUTPUT_DIR      = Path(__file__).parent / "../../data/knime/output"
-OUTPUT_CSV      = "predictions.csv"                                   # <- sortie en CSV
+OUTPUT_CSV      = "predictions.csv"
 
 COLUMN_ORDER = [
     "ticker", "date", "year", "open", "high", "low",
@@ -41,7 +41,6 @@ COLUMN_ORDER = [
 # HELPERS
 # ============================================================
 
-# Encodage Basic Auth (ID:Password en base64)
 _credentials = base64.b64encode(f"{KNIME_API_ID}:{KNIME_API_PASSWORD}".encode()).decode()
 
 HEADERS = {
@@ -52,19 +51,19 @@ HEADERS = {
 
 
 def load_parquet(path: Path) -> pd.DataFrame:
-    """Charge un fichier Parquet et retourne un DataFrame."""
+    """Load a Parquet file and returns a dataframe."""
     if not path.exists():
-        raise FileNotFoundError(f"Fichier introuvable : {path}")
+        raise FileNotFoundError(f"File not found : {path}")
     df = pd.read_parquet(path)
-    print(f"  📂 {path.name} — {len(df)} lignes")
+    print(f"  📂 {path.name} — {len(df)} rows")
     return df
 
 
 def df_to_table_data(df: pd.DataFrame) -> list:
     """
-    Convertit un DataFrame en liste de listes (format table-data KNIME).
-    Les valeurs NaN/NaT sont remplacées par None (-> null en JSON).
-    Les dates sont formatées en ISO 8601.
+    Convert a DataFrame to a list of lists (KNIME table-data format).
+    NaN/NaT values are replaced by None (-> null in JSON).
+    Dates are formatted as ISO 8601 strings.
     """
     rows = []
     for _, row in df.iterrows():
@@ -87,8 +86,8 @@ def df_to_table_data(df: pd.DataFrame) -> list:
 
 def call_knime(table_data: list, ticker: str) -> list | None:
     """
-    Envoie les données d'un ticker au workflow KNIME.
-    Retourne la liste de listes de l'output, ou None en cas d'erreur.
+    Send ticker data to the KNIME workflow via REST.
+    Returns (spec, data) on success, or None on error.
     """
     payload = {"table-input": {"table-data": table_data}}
 
@@ -96,10 +95,10 @@ def call_knime(table_data: list, ticker: str) -> list | None:
         response = requests.post(KNIME_URL, headers=HEADERS, json=payload, timeout=120)
         response.raise_for_status()
     except requests.exceptions.HTTPError as e:
-        print(f"  Erreur HTTP pour {ticker} : {e} — {response.text[:300]}")
+        print(f"  HTTP error for {ticker} : {e} — {response.text[:300]}")
         return None
     except requests.exceptions.RequestException as e:
-        print(f"  Erreur réseau pour {ticker} : {e}")
+        print(f"  Network error for {ticker} : {e}")
         return None
 
     try:
@@ -109,15 +108,15 @@ def call_knime(table_data: list, ticker: str) -> list | None:
         data   = output["table-data"]
         return spec, data
     except (KeyError, json.JSONDecodeError) as e:
-        print(f"  Réponse inattendue pour {ticker} : {e}")
-        print(f"     Réponse brute : {response.text[:500]}")
+        print(f"  Unexpected answer from {ticker} : {e}")
+        print(f"     Raw answer : {response.text[:500]}")
         return None
 
 
 def parse_output(spec: list, data: list) -> pd.DataFrame:
-    """Convertit spec + data KNIME en DataFrame pandas."""
+    """Convert KNIME spec + data into a pandas DataFrame."""
     df = pd.DataFrame(data, columns=spec)
-    # Conversion des colonnes de dates si présentes
+    # Convert date columns if present
     for col in df.columns:
         if "date" in col.lower():
             df[col] = pd.to_datetime(df[col], errors="coerce")
@@ -129,34 +128,34 @@ def parse_output(spec: list, data: list) -> pd.DataFrame:
 # ============================================================
 
 def main():
-    # 1. Lister tous les fichiers Parquet du dossier input
+    # 1. List all Parquet files in the input directory
     input_dir = Path(INPUT_DIR)
-    parquet_files = sorted(input_dir.glob("*.parquet"))  # non-recursif, meme niveau
+    parquet_files = sorted(input_dir.glob("*.parquet")) 
 
     if not parquet_files:
-        raise FileNotFoundError(f"Aucun fichier .parquet trouve dans : {input_dir}")
+        raise FileNotFoundError(f"No .parquet files found in: {input_dir}")
 
-    print(f"  {len(parquet_files)} fichier(s) trouve(s) dans {input_dir}\n")
+    print(f"  {len(parquet_files)} file(s) found in {input_dir}\n")
 
-    # 2. Preparer le dossier de sortie
+    # 2. Prepare the output directory
     out_dir = Path(OUTPUT_DIR)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3. Boucle fichier par fichier
+    # 3. Process files one by one
     all_results = []
     errors = []
 
     for parquet_file in parquet_files:
-        # Extraire le ticker depuis le nom du dossier parent (ex: ticker=AAPL) ou le nom du fichier
+        # Extract ticker from filename (e.g. AAPL.parquet -> AAPL)
         ticker = parquet_file.parent.name.replace("ticker=", "") or parquet_file.stem
         print(f"-> {ticker} ...", end=" ", flush=True)
 
         df_input = load_parquet(parquet_file)
 
-        # Verification des colonnes
+        # Check that all required columns are present
         missing = [c for c in COLUMN_ORDER if c not in df_input.columns]
         if missing:
-            print(f"  Colonnes manquantes, fichier ignore : {missing}")
+            print(f"  Missing columns, file skipped: {missing}")
             errors.append(ticker)
             continue
 
@@ -170,21 +169,21 @@ def main():
         spec, data = result
         df_out = parse_output(spec, data)
         all_results.append(df_out)
-        print(f"OK — {len(df_out)} lignes recues")
+        print(f"OK — {len(df_out)} rows received")
 
-    # 4. Ecriture du Parquet final (concatenation de tous les resultats)
+    # 4. Write final CSV (concatenation of all results)
     if all_results:
         df_final = pd.concat(all_results, ignore_index=True)
         out_path = out_dir / OUTPUT_CSV
         df_final.to_csv(out_path, index=False, date_format="%Y-%m-%d")
-        print(f"\nCSV ecrit : {out_path}  ({len(df_final)} lignes au total)")
+        print(f"\nCSV written : {out_path}  ({len(df_final)} rows total)")
     else:
-        print("\nAucun resultat a ecrire.")
+        print("\nNo results to write.")
 
     if errors:
-        print(f"\nTickers en erreur ({len(errors)}) : {', '.join(errors)}")
+        print(f"\nFailed tickers ({len(errors)}) : {', '.join(errors)}")
 
-    print("\nPipeline termine.")
+    print("\nPipeline complete.")
 
 
 if __name__ == "__main__":

@@ -16,6 +16,7 @@ Thumbs.db
 
 # Secrets
 .env
+*/.env
 
 # Pipeline data (keep folder structure via .gitkeep, ignore contents)
 data/**

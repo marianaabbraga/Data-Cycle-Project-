@@ -2,7 +2,7 @@ import pandas as pd
 import pyodbc
 from datetime import datetime
 
-CSV_FILE_PATH = r"C:\DataCycleProject\Data-Cycle-Project-\data\knime\output\output.csv"
+CSV_FILE_PATH = r"C:\DataCycleProject\Data-Cycle-Project-\data\knime\output\predictions.csv"
 
 SQL_SERVER   = r".\STOCKSQLSERVER"
 DATABASE     = "stockmarketdb2"
