@@ -4,9 +4,9 @@ access_control.py
 User access management for the stock market report.
 
 Two roles:
-  basic    (free)  — price history only: price chart, volume, performance,
+  basic — price history only: price chart, volume, performance,
                      volatility, price correlation heatmap, summary table
-  advanced (paid)  — everything above + technical indicators per ticker,
+  advanced — everything above + technical indicators per ticker,
                      indicator correlation heatmap (SMA/RSI/MACD/Bollinger)
 
 Users are stored in users.json next to this file.
@@ -60,8 +60,8 @@ PERMISSIONS = {
 }
 
 ROLE_LABEL = {
-    "basic":    "Basic (Free)",
-    "advanced": "Advanced (Paid)",
+    "basic":    "Basic",
+    "advanced": "Advanced",
 }
 
 

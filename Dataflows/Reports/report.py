@@ -6,9 +6,9 @@ Stock Market Portfolio Report — with role-based access control.
 Reads data from the Silver parquet layer and generates a self-contained
 HTML report. What the user sees depends on their role:
 
-  basic    (free)  — Portfolio summary, closing prices, normalised
+  basic  — Portfolio summary, closing prices, normalised
                      performance, volume, volatility, price correlation
-  advanced (paid)  — All of the above + indicator correlation heatmap +
+  advanced  — All of the above + indicator correlation heatmap +
                      per-ticker panels (SMA/Bollinger/RSI/MACD)
 
 Users are managed by access_control.py (users.json alongside this file).
@@ -29,10 +29,6 @@ Usage
     # Pass credentials directly (useful for scripting)
     python report.py --user analyst --password analyst123
 
-    # Custom Silver path and output location
-    python report.py --user analyst --password analyst123 \
-        --silver ../../DataLake/Silver \
-        --output ../../Reports/portfolio.html
 """
 
 import argparse
@@ -59,7 +55,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from access_control import UserManager, User
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
-DEFAULT_SILVER = os.path.join(os.path.dirname(__file__), "..", "..", "DataLake", "Silver")
+DEFAULT_SILVER = r"C:\DataCycleProject\DataLake\Silver"
 DEFAULT_OUTPUT = os.path.join(os.path.dirname(__file__), "stock_report.html")
 
 TICKER_COLORS = {
@@ -393,7 +389,7 @@ def _locked_section(title: str) -> str:
       <h2>{title}</h2>
       <div class="locked-box">
         <span class="lock-icon">🔒</span>
-        <p>This section is available to <strong>Advanced (Paid)</strong> users only.</p>
+        <p>This section is available to <strong>Advanced</strong> users only.</p>
         <p class="lock-sub">Upgrade your account to unlock technical indicator charts,
         indicator correlation heatmaps, and per-ticker SMA / RSI / MACD panels.</p>
       </div>
